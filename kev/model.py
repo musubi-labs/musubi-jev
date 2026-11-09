@@ -16,12 +16,39 @@ def load_tokenizer(name, revision=None):
 
 
 _SPECIAL_RE = re.compile(r"<\|([A-Za-z0-9_]+)\|>")
+_CONTROL = {}   # id(tokenizer) -> (tokenizer, pattern of every added/special token string, their ids)
+
+
+class TooLong(ValueError):
+    """A state or branch over the cap. `part` is "state" or "branch"; `index` is the 1-based question for a branch."""
+    def __init__(self, message, part, index=None):
+        super().__init__(message); self.part, self.index = part, index
+
+
+def _control(tok):
+    entry = _CONTROL.get(id(tok))
+    if entry is None or entry[0] is not tok:
+        added = tok.get_added_vocab()
+        strings = sorted({str(t) for t in added} | {str(t) for t in tok.all_special_tokens if t}, key=len, reverse=True)
+        pattern = re.compile("|".join(map(re.escape, strings))) if strings else None
+        entry = _CONTROL[id(tok)] = (tok, pattern, set(added.values()) | set(tok.all_special_ids))
+    return entry[1], entry[2]
 
 
 def user_tokens(tok, text):
     """Tokenize caller-supplied text so it can never produce delimiter/control tokens (option boundaries are unforgeable).
-    The fast tokenizer ignores split_special_tokens, so `<|name|>` is rewritten to `<¦name¦>` before tokenizing."""
-    return tok(_SPECIAL_RE.sub(r"<¦\1¦>", text), add_special_tokens=False).input_ids
+    The fast tokenizer ignores split_special_tokens, so `<|name|>` is rewritten to `<¦name¦>` before tokenizing, and every
+    other added or special token string the tokenizer knows (`<think>`, `<tool_call>`, ...) gets a `¦` after its first
+    character. Rewriting only inserts, so it repeats until no token string is left (nested and overlapping strings).
+    Text that contains none of these tokenizes exactly as the tokenizer would."""
+    pattern, control_ids = _control(tok)
+    text = _SPECIAL_RE.sub(r"<¦\1¦>", text)
+    while pattern is not None:
+        text, n = pattern.subn(lambda m: m.group(0)[0] + "¦" + m.group(0)[1:], text)
+        if not n: break
+    ids = tok(text, add_special_tokens=False).input_ids
+    if control_ids.intersection(ids): raise ValueError("user text produced a control token")
+    return ids
 
 
 OPT_NONE, OPT_DECIDE = -1, -2   # values of enc["opt"]: instruction/state tokens, and the <decide> token
@@ -40,7 +67,7 @@ def encode(tok, rec, max_state=MAX_STATE, max_branch=MAX_BRANCH, strict=False, o
     """
     state_tokens = user_tokens(tok, rec["state"])
     if strict and len(state_tokens) + 1 > max_state:
-        raise ValueError(f"state exceeds {max_state} tokens: {len(state_tokens) + 1}")
+        raise TooLong(f"state exceeds {max_state} tokens: {len(state_tokens) + 1}", "state")
     S = [tok.convert_tokens_to_ids(SPECIAL[0])] + state_tokens[: max_state - 1]
     ids, seg, pos, opt = list(S), [0] * len(S), list(range(len(S))), [OPT_NONE] * len(S)
     q_id, o_id, c_id, d_id = (tok.convert_tokens_to_ids(t) for t in SPECIAL[1:])
@@ -50,7 +77,7 @@ def encode(tok, rec, max_state=MAX_STATE, max_branch=MAX_BRANCH, strict=False, o
         spans = [[o_id] + user_tokens(tok, o) + [c_id] for o in q["options"]]
         br = instr + [t for sp in spans for t in sp] + [d_id]
         if len(br) > max_branch - len(S):
-            raise ValueError(f"branch too long: {len(br)}")
+            raise TooLong(f"branch too long: {len(br)}", "branch", k)
         base = len(ids); p0 = len(S)
         br_opt = [OPT_NONE] * len(instr) + [j for j, sp in enumerate(spans) for _ in sp] + [OPT_DECIDE]
         if option_isolation:
@@ -172,7 +199,7 @@ class DecisionModel(nn.Module):
     def hidden(self, enc):
         return self.hidden_batch([enc])[0, : len(enc["ids"])]
 
-    SHAPE_BUCKET = int(__import__("os").environ.get("KEV_SHAPE_BUCKET", "64"))   # MPS: pad the sequence to a multiple of this (per-shape kernel warm-up); 1 disables
+    SHAPE_BUCKET = 64   # MPS: pad the sequence to a multiple of this (per-shape kernel warm-up); 1 disables. kev.evaluate.load sets it from Config.shape_bucket
 
     def hidden_batch(self, encs):
         """[B, L_max, d] hidden states for a right-padded batch of encoded records. Pads are masked keys and sit after every
@@ -267,8 +294,8 @@ class DecisionModel(nn.Module):
         from transformers import DynamicCache
         Ls = enc["seg"].count(0)
         if self.hybrid:
-            # recurrent layers cannot be cropped back to the state, so a hybrid miss is state pass + branch rows (the
-            # state pass is kept as the reusable prefix by running it twice? no: copy the cache before consuming it)
+            # recurrent layers cannot be cropped back to the state, so a hybrid miss is state pass + branch rows; the
+            # branch rows consume the cache they are given, so they get a copy and the original is kept as the prefix
             Ls, cache, h_state = self.prefix(enc)
             import copy
             return self._branch_rows_from_prefix(enc, copy.deepcopy(cache)), (Ls, cache, h_state)

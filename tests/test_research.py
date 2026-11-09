@@ -96,6 +96,10 @@ def test_strict_encoding_rejects_truncation():
         def convert_tokens_to_ids(self, text):
             return 1000
 
+        def get_added_vocab(self): return {}
+
+        all_special_tokens, all_special_ids = [], []
+
     rec = {"state": "abcdefgh", "questions": [{"instr": "q", "options": ["a", "b"], "label": 0}]}
     assert encode(Tokenizer(), rec, max_state=4)["state_truncated"]
     with pytest.raises(ValueError, match="state exceeds"):
