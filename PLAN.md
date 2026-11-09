@@ -1,6 +1,6 @@
 # Research plan
 
-This file is the living plan: where Kev stands, what runs next and the criteria decided before the runs, and open questions. Completed plans stay as records ([`PLAN_Qwen35.md`](PLAN_Qwen35.md), the Qwen3.5 port, done 2026-09-20). The next proposal is [`PLAN_27b.md`](PLAN_27b.md) (Qwen3.8-27B, question-side LoRA, long documents; written 2026-09-21 after reviewing Solomon). Everything older is kept below under **History**, dated.
+This file is the living plan: where Kev stands, what runs next and the criteria decided before the runs, and open questions. Completed plans stay as records ([`docs/PLAN_Qwen35.md`](docs/PLAN_Qwen35.md), the Qwen3.5 port, done 2026-09-20). The next proposal is [`docs/PLAN_27b.md`](docs/PLAN_27b.md) (Qwen3.8-27B, question-side LoRA, long documents; written 2026-09-21 after reviewing Solomon). Everything older is kept below under **History**, dated.
 
 ## Where we stand (2026-09-21, midday)
 
@@ -48,7 +48,7 @@ Spend tonight ≈ $105 (probes $14, deltas 12 × ~$1.5, dense $5, benches ~$15, 
 ### Decisions taken (2026-09-21, morning, signed off)
 
 1. **Promoted the dates + unknowable deltas** to the main Hub revisions of `kev-9b`, `kev-4b` and `kev-0.8b` (the 0.8B delta ran in the morning: locked test 0.668 → 0.684, +2.2 pp [−0.8, +5.5], Brier 0.473 → 0.460). Pre-delta weights at tag `v7-base`; release tarballs `*-v7-base.tar.gz`. Cards state the costs (coverage@5 % −4 pp at 9B, scienthoon ECE +3 pp, MMLU-Pro −3 pp at 9B).
-2. **Calibration built into the checkpoints** (2026-09-21, later the same day): `head.pt` carries a temperature fitted on the trial's development rows (9B 2.30, 4B 2.14, 0.8B 2.41) and the pointer head applies it in eval mode, so every loader serves calibrated probabilities by default; `KEV_TEMPERATURE=1.0` gives raw logits. Out-of-domain ECE 0.106 → 0.042 (9B), confident errors 8.7 % → 4.0 % (Jev 3.7 %); accuracy unchanged. Coverage at ≤ 5 % error is not moved by a temperature — that needs training-side calibration (`PLAN_27b.md` §5).
+2. **Calibration built into the checkpoints** (2026-09-21, later the same day): `head.pt` carries a temperature fitted on the trial's development rows (9B 2.30, 4B 2.14, 0.8B 2.41) and the pointer head applies it in eval mode, so every loader serves calibrated probabilities by default; `KEV_TEMPERATURE=1.0` gives raw logits. Out-of-domain ECE 0.106 → 0.042 (9B), confident errors 8.7 % → 4.0 % (Jev 3.7 %); accuracy unchanged. Coverage at ≤ 5 % error is not moved by a temperature — that needs training-side calibration (`docs/PLAN_27b.md` §5).
 3. **`date_facts` preprocessor** shipped opt-in (`KEV_DATE_FACTS=1`), documented as preprocessing with separate numbers.
 4. The Qwen3.6-35B-A3B checkpoint stays a research artifact.
 
@@ -76,7 +76,7 @@ Spend tonight ≈ $105 (probes $14, deltas 12 × ~$1.5, dense $5, benches ~$15, 
 - Winners get one locked read and replace the released checkpoint under the same name, with the raw and served columns in the card.
 - Expectation stated in advance: partial — 9B 0.45 → 0.55–0.60. Closing to 0.70 probably needs accuracy gains too (coverage and accuracy are coupled).
 
-**Cost and time.** ~20 deltas ≈ $30, ~4 h wall; C5's data step half a day; locked reads and republish the next morning. Fits the remaining round-2 budget; does not draw on the 27B credits ([`PLAN_27b.md`](PLAN_27b.md)).
+**Cost and time.** ~20 deltas ≈ $30, ~4 h wall; C5's data step half a day; locked reads and republish the next morning. Fits the remaining round-2 budget; does not draw on the 27B credits ([`docs/PLAN_27b.md`](docs/PLAN_27b.md)).
 
 ## Open questions
 
@@ -371,7 +371,7 @@ includes zero; deadline 0.72 not 0.75); the single locked-test read shows Kev-9B
 (+7.3 pp [+2.8, +11.7], Brier 0.243 vs 0.327) and Kev-4B 0.832 vs 0.806. Published as the current family: `jaredpalmer/kev-9b`,
 `jaredpalmer/kev-4b` (Qwen3 weights at tag `qwen3`) and `jaredpalmer/kev-0.8b` (locked 0.827 / 0.668 vs Kev-0.6B 0.808 / 0.642, +4.8 pp
 [+0.2, +9.3]); the Qwen3 checkpoints stay published as the fast Mac option and are no longer developed. The deadline family is a training-data
-problem, not a readout problem (issue #8; adapter-merge probe). Full log: [PLAN_Qwen35.md](PLAN_Qwen35.md).
+problem, not a readout problem (issue #8; adapter-merge probe). Full log: [docs/PLAN_Qwen35.md](docs/PLAN_Qwen35.md).
 
 Ops: two studies were lost to the local client disconnecting (Modal cancels `.starmap` inputs when the caller dies; `--detach`
 keeps only the last-triggered function). Studies now fan out server-side from the **deployed** app (`modal deploy modal_app.py`;

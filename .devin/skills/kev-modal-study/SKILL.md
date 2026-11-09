@@ -1,6 +1,6 @@
 ---
 name: kev-modal-study
-description: Launch, monitor and pull Kev training studies, probes and benchmarks on Modal (modal_app.py, modal_probe35.py). Use when running trials, delta fine-tunes, base probes or remote evals for the Kev repo.
+description: Launch, monitor and pull Kev training studies, probes and benchmarks on Modal (modal_app.py, docs/modal_probe35.py). Use when running trials, delta fine-tunes, base probes or remote evals for the Kev repo.
 ---
 
 # Kev on Modal — study workflow
@@ -29,15 +29,15 @@ All GPU work in this repo goes through two files. Never train large models local
 
 Timing (H100, row-batched hybrid): 0.8B ≈ 20 min, 4B ≈ 60 min, 9B ≈ 90 min for the full v7 recipe; deltas (1 epoch over ~1k records + 2k replay) ≈ 10–20 min. Set `--timeout` with ≥ 50 % headroom; a timed-out container loses everything.
 
-## Probes and remote benchmarks: `modal_probe35.py`
+## Probes and remote benchmarks: `docs/modal_probe35.py`
 
 Image has transformers 5 + fla; mounts `evals/` and `scripts/` at run time (no deploy step). Run with `--detach` in the background and read the log.
 
 - Untrained-base probe (zero-shot letter logits, same items as every README row):
-  `KEV_PROBE_GPU=H200 uv run modal run --detach modal_probe35.py::main --bases Qwen/X-Base --revision <sha> [--suite evals/v9/transfer-v9] [--prompt semif] [--adapter /runs/.../checkpoint --tag name]`
+  `KEV_PROBE_GPU=H200 uv run modal run --detach docs/modal_probe35.py::main --bases Qwen/X-Base --revision <sha> [--suite evals/v9/transfer-v9] [--prompt semif] [--adapter /runs/.../checkpoint --tag name]`
   Output pulled to `runs/probes/<base>-base-<suite>/report.json`. Use H200 for ≥ 30B bf16.
 - Benchmark any checkpoint on any suite or `--data` JSONL (`run@suite@name` triples):
-  `uv run modal run --detach modal_probe35.py::benchmarks --jobs "jaredpalmer/kev-9b@evals/external/semif-v1@kev-9b-semif,/runs/X/00-trial-0/checkpoint@evals/v9/transfer-v9@x-v9"`
+  `uv run modal run --detach docs/modal_probe35.py::benchmarks --jobs "jaredpalmer/kev-9b@evals/external/semif-v1@kev-9b-semif,/runs/X/00-trial-0/checkpoint@evals/v9/transfer-v9@x-v9"`
   Output pulled to `runs/<name>/report.json`. Both entrypoints skip names that already exist locally / on the volume.
 - Always give the entrypoint (`::main`, `::benchmarks`): the file has several.
 

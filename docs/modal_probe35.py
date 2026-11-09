@@ -1,7 +1,7 @@
 """Zero-shot base-model probe for Qwen3.5 bases on the frozen transfer suite, in its own image (transformers >= 5 is
-required for the qwen3_5 architecture; the main Modal app pins the repo's uv.lock, which is on transformers 4.x).
+required for the qwen3_5 architecture).
 
-    uv run modal run modal_probe35.py --bases Qwen/Qwen3.5-4B-Base,Qwen/Qwen3.5-9B-Base
+    uv run modal run docs/modal_probe35.py --bases Qwen/Qwen3.5-4B-Base,Qwen/Qwen3.5-9B-Base
 
 Writes benchmark-compatible rows/report to the kev-runs volume under /probes/<name> and pulls them to runs/probes/.
 Same readout as scripts/base_mmlu_probe.py: next-token letter logits over the rendered options, no training.
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import modal
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 app = modal.App("kev-probe35")
 image = (
     modal.Image.debian_slim(python_version="3.12")
