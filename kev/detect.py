@@ -85,6 +85,10 @@ def detect(kev, body) -> dict:
     text, definitions, threshold = parse(body)
     ids = sorted(definitions)
     req = SystemOneRequest.model_validate({"state": text, "questions": {i: {"type": "noul", "instructions": QUESTION + definitions[i]} for i in ids}})
-    res = kev.answer(req)
+    try: res = kev.answer(req)
+    except KevError as e:
+        if e.path == "state": raise KevError(e.code, e.message, "content.0") from None
+        if e.path and e.path.startswith("questions."): raise KevError(e.code, e.message, "definitions." + e.path.split(".", 1)[1]) from None
+        raise
     scores = {i: floor6(p[1]) for i, p in zip(ids, res.probabilities)}
     return {"model": model_string(kev.identity(), definitions), "scores": scores, "flagged": flag(scores, threshold)}

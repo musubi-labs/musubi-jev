@@ -47,7 +47,7 @@ def create_app(kev: Kev, demo: bool = False) -> FastAPI:
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(request: Request, exc: StarletteHTTPException):
-        code = "bad_request" if exc.status_code < 500 else "model_error"
+        code = "bad_request" if exc.status_code < 500 else "model_error"   # unknown routes and methods keep their 404 and 405
         return JSONResponse({"error": {"code": code, "message": str(exc.detail), "retryable": False}}, status_code=exc.status_code)
 
     @app.exception_handler(Exception)

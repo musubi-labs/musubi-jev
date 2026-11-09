@@ -19,6 +19,10 @@ _SPECIAL_RE = re.compile(r"<\|([A-Za-z0-9_]+)\|>")
 _CONTROL = {}   # id(tokenizer) -> (tokenizer, pattern of every added/special token string, their ids)
 
 
+class ControlToken(ValueError):
+    """User text still produced a delimiter or special token after neutralising."""
+
+
 class TooLong(ValueError):
     """A state or branch over the cap. `part` is "state" or "branch"; `index` is the 1-based question for a branch."""
     def __init__(self, message, part, index=None):
@@ -47,7 +51,7 @@ def user_tokens(tok, text):
         text, n = pattern.subn(lambda m: m.group(0)[0] + "¦" + m.group(0)[1:], text)
         if not n: break
     ids = tok(text, add_special_tokens=False).input_ids
-    if control_ids.intersection(ids): raise ValueError("user text produced a control token")
+    if control_ids.intersection(ids): raise ControlToken("user text produced a control token")
     return ids
 
 

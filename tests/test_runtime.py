@@ -188,3 +188,16 @@ def test_the_lock_serialises_threads_over_the_shared_model():
     [t.start() for t in threads]; [t.join() for t in threads]
     assert model.peak == 1
     assert k.decide("s", noul(1)) == {"q0": {"type": "noul", "noul": 0.75}}
+
+
+def test_relative_paths_are_never_taken_for_hub_ids():
+    for p in ("runs/nope", "./runs/nope", "runs/a/b"):
+        with pytest.raises(FileNotFoundError, match="not found"): Kev.from_pretrained(p, device="cpu")
+
+
+def test_only_control_token_and_length_errors_become_bad_request(tiny_kev, monkeypatch):
+    from kev.errors import KevError
+    def boom(rec): raise ValueError("internal detail")
+    monkeypatch.setattr(tiny_kev, "_probs", boom)
+    with pytest.raises(KevError) as e: tiny_kev.decide("s", {"q": {"type": "noul", "instructions": "x"}})
+    assert e.value.code == "model_error" and "internal" not in e.value.message

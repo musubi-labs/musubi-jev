@@ -213,7 +213,7 @@ For Choice with `K > 1` options, confidence is `(p_max − 1/K) / (1 − 1/K)`. 
 
 Objects and arrays are converted to labeled text. Delimiter-like strings in user input, and every other special or added token string the tokenizer knows, are escaped before tokenization. `usage.output_tokens` counts tokens in the serialized answers, not generated tokens.
 
-Requests are limited in `kev/limits.py`: 1 MB of body, 100,000 characters of state, 64 questions, 255 options per question and 512 per request, 2,000 characters per option, 10,000 per instruction, and 8,192 tokens of state. A request over a limit is refused, never truncated.
+Requests are limited in `kev/limits.py`: 1 MB of body (checked from `Content-Length`), 100,000 characters of state, 64 questions, 255 options per question and 512 per request, 2,000 characters per option, 10,000 per instruction, and 8,192 tokens of state. A request over a limit is refused, never truncated.
 
 Every failure has one shape. `path` appears when it applies, and `retryable` is true only for `unavailable`:
 
@@ -223,7 +223,7 @@ Every failure has one shape. `path` appears when it applies, and `retryable` is 
 
 | Code | Status | When |
 |---|---|---|
-| `bad_request` | 422 | The request is malformed or breaks a rule (unknown question type, one option on a Score, unknown route) |
+| `bad_request` | 422 | The request is malformed or breaks a rule (unknown question type, one option on a Score). An unknown route or method also has this code, with status 404 or 405 |
 | `too_large` | 413 | A limit above is exceeded |
 | `model_error` | 500 | The model failed on this request |
 | `unavailable` | 503 | The model was busy for longer than `KEV_QUEUE_TIMEOUT` seconds (default 120). Retry |
@@ -246,7 +246,7 @@ The demo routes are off unless you start the server with `--demo` (or `KEV_DEMO=
 An adapter for open-vocabulary checks in the shape of the Musubi Detect contract. It is **experimental and not calibrated**: 0.5 does not yet mean what it means for Detect categories, and it stays out of Detect until a frozen definition suite gates it. Kev was trained on public classification and QA data, not on moderation definitions at low prevalence.
 
 ```jsonc
-{"content": [{"type": "text", "data": "…"}],          // exactly one text part, up to 100,000 characters
+{"content": [{"type": "text", "data": "…"}],          // exactly one text part, up to 100,000 characters, and no more than 8,192 tokens
  "definitions": {"threat": "The text states or implies harm to a person."},   // up to 32; ids match [a-z][a-z0-9_]*; up to 2,000 characters each
  "threshold": 0.5}                                      // optional, above 0 and below 1
 ```

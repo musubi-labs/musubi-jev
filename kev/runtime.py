@@ -21,7 +21,7 @@ from .api import SystemOneRequest, output_tokens, to_answers, to_record, with_da
 from .config import Config
 from .errors import KevError
 from .evaluate import load, resolve_run
-from .model import TooLong
+from .model import ControlToken, TooLong
 
 log = logging.getLogger("kev")
 TEMPLATE_VERSION = "kev-text-1"   # the rendering of requests into model text (api.render, api.to_record, model.encode); part of identity()
@@ -155,7 +155,7 @@ class Kev:
                 path = "state" if e.part == "state" else f"questions.{meta[e.index - 1]['id']}"
                 raise KevError("too_large", str(e), path) from None
             except KevError: raise
-            except ValueError as e: raise KevError("bad_request", str(e)) from None
+            except ControlToken as e: raise KevError("bad_request", str(e)) from None
             except Exception:
                 log.exception("inference failed")
                 raise KevError("model_error", "the model failed on this request") from None

@@ -31,6 +31,7 @@ def resolve_run(run):
     """Local run directory, or a Hub repo id like jaredpalmer/kev-4b, optionally pinned to a revision or tag with
     `@` (jaredpalmer/kev-4b@qwen3); downloaded to the HF cache."""
     if os.path.isdir(run): return run
+    if run.startswith(("./", "../", "/", "~", "runs/")) or os.path.isdir(os.path.dirname(run)): raise FileNotFoundError(f"checkpoint directory not found: {run}")
     if not re.fullmatch(r"[\w.-]+/[\w.-]+(@[\w./-]+)?", run): raise FileNotFoundError(f"checkpoint directory not found: {run}")
     from huggingface_hub import snapshot_download
     repo, _, revision = run.partition("@")
