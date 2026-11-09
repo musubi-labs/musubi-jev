@@ -205,9 +205,8 @@ def execute_trial(config, suite, output, expected_sources, device, existing=None
                 if line.startswith(("ep", "saved", "device", "ablation")) or "Error" in line: print(line.rstrip(), flush=True)
         if proc.returncode:
             raise subprocess.CalledProcessError(proc.returncode, args)
-    if config.get("weights_dtype") == "bf16":
-        os.environ["KEV_DTYPE"] = "bf16"      # a backbone trained in bf16 weights is evaluated the same way (fp32 would not fit and is not what was trained)
-    predictor = LocalPredictor(run, device)
+    # a backbone trained in bf16 weights is evaluated the same way (fp32 would not fit and is not what was trained)
+    predictor = LocalPredictor(run, device, dtype=torch.bfloat16 if config.get("weights_dtype") == "bf16" else None)
     try:
         if existing:
             temperature = 1.0

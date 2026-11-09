@@ -21,10 +21,11 @@ from pydantic import ValidationError  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402
 
 from kev.api import SystemOneRequest, output_tokens, render, to_answers, to_record, with_date_facts  # noqa: E402
+from kev.hub import model_repo  # noqa: E402
 from kev.model import DecisionModel  # noqa: E402
 from presets import PRESETS  # noqa: E402
 
-MODELS = {"Kev-4B": "jaredpalmer/kev-4b", "Kev-0.8B": "jaredpalmer/kev-0.8b"}
+MODELS = {"Kev-4B": model_repo("4b"), "Kev-0.8B": model_repo("0.8b")}
 DEFAULT_MODEL = "Kev-4B"
 TEMPERATURES = {}                        # per model: the temperature fitted on its development rows, read from head.pt (scripts/calibrate_checkpoint.py)
 INFER_MAX_STATE, INFER_MAX_BRANCH = 8192, 8192   # serving limits, as in kev.serve (training used 384/1024)

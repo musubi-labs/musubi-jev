@@ -11,8 +11,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import matplotlib.pyplot as plt
 import chartstyle as cs
+from kev.hub import GITHUB_REPO, ORG
 from chartstyle import HOLLOW, JEV, KEV, body, display, heading, hbars, rule, stat, use_style
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,7 +66,7 @@ def main():
         stat(fig, .70, .76 - .195 * i, f"{display(name)}, out of domain, locked test", f"{100 * locked['acc']:.1f}%",
              f"Brier {locked['brier']:.3f}  ·  ECE {100 * locked['ece']:.1f}%", color=KEV[name])
 
-    body(fig, .05, .05, "github.com/jaredpalmer/kev  ·  huggingface.co/jaredpalmer  ·  Apache-2.0  ·  every number reproducible from frozen, checksummed suites", size=11)
+    body(fig, .05, .05, f"github.com/{GITHUB_REPO}  ·  huggingface.co/{ORG}  ·  Apache-2.0  ·  every number reproducible from frozen, checksummed suites", size=11)
     out = ROOT / ("docs/kev-benchmark-dark.png" if dark else "docs/kev-benchmark.png")
     fig.savefig(out, dpi=100, metadata={"Title": "Kev benchmarks"}); plt.close(fig)
     print(out)

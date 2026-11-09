@@ -7,6 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 from kev.data import ALL_REPOS, ALL_SOURCES, EVAL_ONLY, REPOS, SOURCES, TRAINABLE, TRANSFER_REPOS, TRANSFER_SOURCES, build, dataset_ref, materialize, source_seed
+from kev.hub import SUITES_REPO
 from kev.model import encode, load_tokenizer
 
 SPLITS = ("train", "calibration", "development", "test")
@@ -14,7 +15,7 @@ BASES = ("Qwen/Qwen2.5-0.5B", "Qwen/Qwen3-0.6B-Base")
 # Frozen suites are mirrored on the Hub. Manifests (with the sha256 of every partition) and the development/test
 # partitions live in git; large training partitions are fetched from this dataset on first use and verified against
 # the manifest, so the suite hash and every provenance record stay unchanged.
-SUITES_DATASET = "jaredpalmer/kev-suites"
+SUITES_DATASET = SUITES_REPO
 SUITES_REVISION = "a957287d1c502a4e2e3b9d9d1325c2c6f27f181c"
 
 

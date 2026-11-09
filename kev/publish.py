@@ -1,6 +1,6 @@
 """Publish a trained run to the Hugging Face Hub.
 
-Repo naming: jaredpalmer/kev-<base size>, e.g. kev-0.5b (Qwen2.5-0.5B), kev-0.6b (Qwen3-0.6B), kev-4b, kev-8b.
+Repo naming: kev.hub.model_repo(<base size>), i.e. <kev.hub.ORG>/kev-<base size>, e.g. kev-0.5b (Qwen2.5-0.5B), kev-0.6b (Qwen3-0.6B), kev-4b, kev-8b.
 The exact base checkpoint is recorded in the model card's `base_model` field and in head.pt.
 
     uv run python -m kev.publish --run runs/kev --repo jaredpalmer/kev-0.5b
@@ -20,7 +20,7 @@ FILES = ["adapter_config.json", "adapter_model.safetensors", "head.pt", "tokeniz
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
-    ap.add_argument("--repo", required=True, help="e.g. jaredpalmer/kev-0.5b")
+    ap.add_argument("--repo", required=True, help="e.g. jaredpalmer/kev-0.5b (kev.hub.model_repo)")
     ap.add_argument("--message", default=None)
     ap.add_argument("--card", required=True, help="model card markdown, e.g. docs/model-cards/kev-4b.md")
     ap.add_argument("--private", action="store_true")

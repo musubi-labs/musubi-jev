@@ -7,12 +7,14 @@
 4. isolation: can question B read a secret placed in sibling question A? (must not) / in state (should)
 5. latency + equality: packed N questions vs N separate calls
 """
-import argparse, json, math, os, random, time, string
+import argparse, json, math, os, random, re, time, string
 from collections import defaultdict
 import numpy as np
 import torch
 import torch.nn.functional as F
 from .data import build, augment, materialize, DISTRACTORS
+from .checkpoint import HeadMeta
+from .config import Config
 from .model import DecisionModel, load_tokenizer, encode
 
 
@@ -29,39 +31,45 @@ def resolve_run(run):
     """Local run directory, or a Hub repo id like jaredpalmer/kev-4b, optionally pinned to a revision or tag with
     `@` (jaredpalmer/kev-4b@qwen3); downloaded to the HF cache."""
     if os.path.isdir(run): return run
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+(@[\w./-]+)?", run): raise FileNotFoundError(f"checkpoint directory not found: {run}")
     from huggingface_hub import snapshot_download
     repo, _, revision = run.partition("@")
     return snapshot_download(repo, revision=revision or None, allow_patterns=["*.json", "*.safetensors", "*.pt", "*.txt", "*.jinja"])
 
 
-def load(run, dev, dtype=None, merge=True, attn=None):
-    """dtype: None = fp32 (exact; what every reported number uses). KEV_DTYPE=bf16 or dtype=torch.bfloat16 halves memory
+def load(run, dev, dtype=None, merge=True, attn=None, config=None):
+    """-> (tokenizer, model). Settings come from `config` (kev.config.Config; default: the KEV_* environment); an explicit
+    dtype, merge=False or attn argument wins over it. `model.meta` is the checkpoint's kev.checkpoint.HeadMeta.
+
+    dtype: None = fp32 (exact; what every reported number uses). Config.dtype="bf16" or dtype=torch.bfloat16 halves memory
     for serving large backbones; probabilities then differ from the fp32 numbers in the third decimal.
 
     merge (default): fold the LoRA into the base weights in fp32 before any cast. Exact in fp32 (max |dp| 0 measured),
     and in bf16 it is both faster (~15%) and closer to the fp32 numbers than running the unmerged adapter in bf16
-    (kev-4b, 24 dev records: max |dp| 0.017 vs 0.029, 0 vs 1 argmax flips). KEV_MERGE=0 keeps the adapter separate.
-    attn: attention backend; None = the model default (SDPA on CUDA, eager elsewhere). KEV_ATTN=sdpa enables SDPA on MPS
+    (kev-4b, 24 dev records: max |dp| 0.017 vs 0.029, 0 vs 1 argmax flips). Config.merge=False (KEV_MERGE=0) keeps the adapter separate.
+    attn: attention backend; None = the model default (SDPA on CUDA, eager elsewhere). Config.attn="sdpa" enables SDPA on MPS
     (measured parity with eager; a few percent faster)."""
-    import os
+    config = config or Config.from_env()
     run = resolve_run(run)
-    meta = torch.load(f"{run}/head.pt", map_location="cpu")
-    dtype = dtype or {"bf16": torch.bfloat16, "fp16": torch.float16}.get(os.environ.get("KEV_DTYPE", ""), torch.float32)
-    if meta.get("weights_dtype") == "bf16":
+    raw = torch.load(f"{run}/head.pt", map_location="cpu")
+    meta = HeadMeta.from_dict(raw, config.temperature)
+    dtype = dtype or {"bf16": torch.bfloat16, "fp16": torch.float16}.get(config.dtype, torch.float32)
+    if meta.weights_dtype == "bf16":
         # trained with a bf16 backbone (--weights_dtype bf16, e.g. the 35B-A3B MoE whose fused experts need bf16): load it the same
         # way, and keep the fp32 adapter unmerged rather than folding it into bf16 weights. fp32 would double the memory and is not
         # what was trained.
         dtype, merge = torch.bfloat16, False
     import json as _json
     adapter_cfg = _json.loads(open(f"{run}/adapter_config.json").read())
-    merge = merge and os.environ.get("KEV_MERGE", "1") != "0" and not adapter_cfg.get("trainable_token_indices")   # token-trained adapters stay unmerged
-    attn = attn or os.environ.get("KEV_ATTN") or None
-    tok = load_tokenizer(meta["base"], revision=meta.get("base_revision"))
-    m = DecisionModel(meta["base"], tok, dev, lora=None, revision=meta.get("base_revision"), head_dim=meta.get("head_dim", 256),
-                      option_isolation=meta.get("option_isolation", False), dtype=torch.float32 if merge else dtype, attn=attn)
+    merge = merge and config.merge and not adapter_cfg.get("trainable_token_indices")   # token-trained adapters stay unmerged
+    attn = attn or config.attn or None
+    tok = load_tokenizer(meta.base, revision=meta.base_revision)
+    m = DecisionModel(meta.base, tok, dev, lora=None, revision=meta.base_revision, head_dim=meta.head_dim,
+                      option_isolation=meta.option_isolation, dtype=torch.float32 if merge else dtype, attn=attn)
+    m.SHAPE_BUCKET = config.shape_bucket
     from peft import PeftModel
     m.lm = PeftModel.from_pretrained(m.lm, run).to(dev)   # trainable token embeddings, if any, are inside the adapter
-    scale = float(os.environ.get("KEV_LORA_SCALE", "1"))
+    scale = config.lora_scale
     if scale != 1:   # WiSE-FT-style interpolation between the base (0) and the fine-tuned weights (1), at inference, no retraining
         for module in m.lm.modules():
             if hasattr(module, "scaling") and isinstance(module.scaling, dict):
@@ -69,9 +77,10 @@ def load(run, dev, dtype=None, merge=True, attn=None):
         m.lora_scale = scale
     if merge: m.lm = m.lm.merge_and_unload()               # in fp32: exact
     if dtype != torch.float32: m.lm = m.lm.to(dtype)
-    m.head.load_state_dict(meta["head"]); m.eval()
-    # calibration: the checkpoint's fitted temperature applies by default; KEV_TEMPERATURE overrides it (1.0 = raw logits)
-    m.head.temperature = float(os.environ["KEV_TEMPERATURE"]) if os.environ.get("KEV_TEMPERATURE") else float(meta.get("temperature", 1.0))
+    m.head.load_state_dict(raw["head"]); m.eval()
+    # calibration: the checkpoint's fitted temperature applies by default; Config.temperature (KEV_TEMPERATURE) overrides it (1.0 = raw logits)
+    m.head.temperature = meta.applied_temperature
+    m.meta = meta
     return tok, m
 
 
