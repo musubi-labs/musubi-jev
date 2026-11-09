@@ -37,10 +37,10 @@ See README.md (deep dive) and docs/model-cards/ (one card per checkpoint: recipe
 - Current family (2026-09-21, all Qwen3.5 + the dates/unknowable delta): `jaredpalmer/kev-9b` (`night2-9b-du/00-trial-0`), `jaredpalmer/kev-4b` (`night2-4b-du/00-trial-0`;
   Qwen3 weights at tag `qwen3`), `jaredpalmer/kev-0.8b` (`night2-08b-du2/00-trial-0`). Pre-delta v7 checkpoints at tag `v7-base` (`q35-9b/01-trial-1`, `q35-4b-s23/00-trial-0`, `q35-08b/02-trial-2`).
   Calibration is built into each checkpoint: `head.pt["temperature"]` (fitted by `scripts/calibrate_checkpoint.py` on the trial's development rows; 9B 2.30, 4B 2.14,
-  0.8B 2.41) is applied by `PointerHead` in eval mode; `KEV_TEMPERATURE=1.0` overrides to raw. Re-run the script after any new checkpoint before publishing. Opt-in: `KEV_DATE_FACTS=1` (day counts). Delta data: evals/night2/ (scripts/build_night2_data.py). Previous generation, kept for Mac latency: `kev-8b`, `kev-0.6b`, `kev-4b@qwen3` (cards `*-qwen3.md`). Qwen3.5 backbones are hybrid (Gated DeltaNet): `DecisionModel.hybrid`
+  0.8B 2.41) is applied by `PointerHead` in eval mode; `KEV_TEMPERATURE=1.0` overrides to raw. The loader exposes it as `model.meta` (`kev/checkpoint.py: HeadMeta`) and `GET /v1/models` reports `calibration`. Re-run the script after any new checkpoint before publishing. Opt-in: `KEV_DATE_FACTS=1` (day counts; `kev/config.py` documents it and decides nothing more). Delta data: evals/night2/ (scripts/build_night2_data.py). Previous generation, kept for Mac latency: `kev-8b`, `kev-0.6b`, `kev-4b@qwen3` (cards `*-qwen3.md`). Qwen3.5 backbones are hybrid (Gated DeltaNet): `DecisionModel.hybrid`
   routes them through `forward_rows_batch` (one causal row per question, state repeated) and `_branch_rows_from_prefix` for serving; the packed
   block-causal mask is only valid on attention-only bases. Needs transformers>=5.17, peft>=0.21; CUDA wants `flash-linear-attention` + `triton>=3.7.1`
-  (in the Modal image). MPS has no fast DeltaNet kernels (Kev-4B 0.78 s vs 0.17 s for the Qwen3 one); MLX is the planned fix. Plan and results: PLAN_Qwen35.md.
+  (in the Modal image). MPS has no fast DeltaNet kernels (Kev-4B 0.78 s vs 0.17 s for the Qwen3 one); MLX is the planned fix. Plan and results: docs/PLAN_Qwen35.md.
 - Delta fine-tuning: `kev.train --init_from <run dir | Hub id[@rev]>` warm-starts LoRA + head (compatibility checked before load; source hashes in
   provenance; allowlisted in `kev/experiment.py` so studies can run cheap delta trials from a released checkpoint). Use lr <= 2e-5 for deltas.
 - Publish: `uv run python -m kev.publish --run runs/<run> --repo jaredpalmer/kev-<size> --card docs/model-cards/<name>.md` (needs `hf auth login`). Repos are named by
@@ -48,35 +48,45 @@ See README.md (deep dive) and docs/model-cards/ (one card per checkpoint: recipe
   Collection: huggingface.co/collections/jaredpalmer/kev-6aad9d0ea49f2589665e07cd. `--run` in serve/evaluate accepts a Hub id.
 - HF Space (public demo, ZeroGPU): huggingface.co/spaces/jaredpalmer/kev. Source in `space/` (Gradio 6 `app.py`, `presets.py` mirrors the
   playground presets, `README.md` frontmatter `models:`/`datasets:` is what links the Space from the model and dataset pages). Publish with
-  `scripts/publish_space.sh [repo] [message]`: it stages `space/` + `kev/{__init__,model,api}.py` into one `hf upload --type space` commit,
+  `scripts/publish_space.sh [repo] [message]`: it stages `space/` + `kev/{__init__,hub,model,api}.py` into one `hf upload --type space` commit,
   so the vendored modules never drift from the repo (a stale vendored `model.py` is how the hugging-apps Space broke on Qwen3.5). Any
   change to `kev/model.py` or `kev/api.py` that affects serving should be republished. ZeroGPU rules: `import spaces` first, load on CPU in
   fp32 (`PeftModel.from_pretrained(..., torch_device="cpu")`, otherwise peft picks the faked cuda device and crashes), merge, then
   `.to("cuda")` once at module scope; a restart reloads both models (~3 min). Check with `hf spaces logs jaredpalmer/kev` and the
   gradio_client `/decide` endpoint; the Space is also in the Kev collection and needs PRO to exist.
+- Python: `from kev import Kev; kev = Kev.from_pretrained("runs/kev"); kev.decide(state, questions)` returns the `answers` object of `/v1/systemone`.
+  `Kev.answer(SystemOneRequest)` also returns raw probabilities and usage. `kev/runtime.py` holds the one load path (`kev.evaluate.load`), the request limits
+  (`kev/limits.py`), the lock that serialises the shared tokenizer, model and prefix cache, and `KevError` (`kev/errors.py`). `kev/__init__.py` imports `Kev` lazily
+  because the Space vendors it. Settings: `kev/config.py` (`Config.from_env()` is the only reader of `KEV_*`; everything else takes the object).
 - Serve: `uv run --extra serve python -m kev.serve --run runs/kev --port 8008` (falls back to runs/smoke)
-  - TypeSafe-compatible: `POST /v1/systemone`, `GET /v1/models` (no auth). Playground routes under `/api/*`.
+  - Production surface (no auth): `POST /v1/systemone` (TypeSafe-compatible, also returns `latency_ms`), `GET /v1/models`, `GET /healthz`. There are no `/api/*` routes.
+  - Every failure is `{"error": {"code", "message", "path"?, "retryable"}}`: `bad_request` 422, `too_large` 413, `model_error` 500, `unavailable` 503.
+  - `--demo` (or `KEV_DEMO=1`) adds the demo routes: `POST /v1/systemone/permute` (one Choice under n option orders), `POST /v1/systemone/separate`
+    (each question alone; packed-vs-separate comparison) and the experimental, uncalibrated `POST /v1/detect` (`kev/detect.py`, Detect wire for open-vocabulary definitions).
   - SDK: `TypeSafeClient(api_key="local", base_url="http://127.0.0.1:8008", model="kev-latest")`
-- Extra endpoints for the demo: `POST /v1/systemone/permute` (one Choice under n option orders), `POST /v1/systemone/separate`
-  (each question alone; packed-vs-separate comparison). `/v1/systemone` also returns `latency_ms`.
-- Web demo: `cd playground && npm run dev -- -p 3001` (:3000 is used by another project). Next 16 app router; `/kev/*` is
+- Web demo: start the server with `--demo` (the playground calls permute and separate), then `cd playground && npm run dev -- -p 3001` (:3000 is used by another project). Next 16 app router; `/kev/*` is
   rewritten to the FastAPI server (`KEV_API`, default http://127.0.0.1:8009). Presets live in `playground/src/lib/kev.ts`.
   - `/chess` (`src/components/chess-game.tsx`, `src/lib/chess.ts`, chess.js): legal moves -> Choice options, board -> state, Score for eval;
     games in localStorage key `kev.chess.v1`.
   - React Compiler lint forbids sync setState in effects; schedule via setTimeout or move into handlers.
   - Next 16 dev only trusts `localhost`; other hostnames need `allowedDevOrigins` or the page SSRs but never hydrates
     (no console errors). `127.0.0.1` is allowed in `next.config.ts`. Verify hydration with `agent-browser` (CDP), not curl.
-- Unit tests (no weights, CI): `uv run --extra serve python -m pytest tests/test_unit.py tests/test_research.py -q`
+- Unit tests (no weights, CI): `uv run --extra serve python -m pytest tests/test_unit.py tests/test_research.py tests/test_tokens.py tests/test_runtime.py tests/test_serve.py tests/test_detect.py -q`.
+  `tests/conftest.py` builds a tiny random checkpoint (local tokenizer, 2-layer Qwen2, rank-4 LoRA) so the loader, `Kev` and the server run without downloads.
 - API tests (server must be up): `KEV_BASE_URL=http://127.0.0.1:8009 uv run --extra serve python -m pytest tests/test_api.py -q`
 
 ## Layout
+- Root has README, AGENTS, PLAN.md (living plan). Superseded plans, `scratchpad.txt` (old working notes) and `modal_probe35.py` are under `docs/`.
 - `kev/data.py`      dataset -> typed records, permutation / none-of-the-above / distractor augmentation
 - `kev/model.py`     encode(), branch_mask(), PointerHead, DecisionModel
 - `kev/train.py`     LoRA fine-tune, batch size 1 with grad accumulation (variable-length custom masks)
 - `kev/evaluate.py`  acc/ECE, permutation stability, IIA shift, isolation probe, packed-vs-separate
 - `kev/plot.py`      loss curve(s) from train logs + accuracy-vs-baselines bars from eval.json
 - `kev/api.py`       TypeSafe request/response models; Noul/Choice/Score -> pointer options; confidence formulas
-- `kev/serve.py`     FastAPI: /v1/systemone (+ /v1/models) and /api/* playground routes
+- `kev/runtime.py`   `Kev`: load a checkpoint, `decide`/`answer`, limits, lock, prefix cache
+- `kev/serve.py`     FastAPI over one `Kev`: /v1/systemone, /v1/models, /healthz; `--demo` adds permute, separate, /v1/detect
+- `kev/detect.py`    experimental Detect-shaped adapter (definitions -> Noul questions); not calibrated
+- `kev/config.py`, `kev/checkpoint.py`, `kev/errors.py`, `kev/limits.py`, `kev/hub.py`   settings, head.pt metadata, the error object, request limits, Hub ids
 - `tests/test_api.py` conformance against the docs' example requests + official SDK
 
 ## Notes
@@ -84,11 +94,12 @@ See README.md (deep dive) and docs/model-cards/ (one card per checkpoint: recipe
   peft `trainable_token_indices` leaked memory on MPS.
 - `output_hidden_states=True` on MPS blows memory; use the bare `.model` backbone's `last_hidden_state`.
 - `PolyAI/banking77` uses a loading script (unsupported); use `legacy-datasets/banking77`.
-- User text is tokenized via `model.user_tokens()`, which rewrites `<|name|>` -> `<¦name¦>` so callers cannot forge
-  option/branch delimiter tokens (the fast tokenizer ignores `split_special_tokens`).
+- User text is tokenized via `model.user_tokens()`, which rewrites `<|name|>` -> `<¦name¦>` and puts a `¦` into every other added or special token
+  string the tokenizer knows (`<think>` ...), so callers cannot forge option/branch delimiters or control tokens (the fast tokenizer ignores
+  `split_special_tokens`). `tests/test_tokens.py` feeds it hostile strings.
 - Training data is built as TypeSafe-shaped requests and goes through `api.to_record()` (`data.materialize`),
   so train and serve text are identical.
-- Serving path (`kev.evaluate.load` + `kev.serve`): LoRA merged in fp32 then cast (`KEV_MERGE=0` to keep unmerged), `KEV_ATTN=sdpa` default on MPS,
+- Serving path (`kev.evaluate.load` + `kev.runtime`): LoRA merged in fp32 then cast (`KEV_MERGE=0` to keep unmerged), `KEV_ATTN=sdpa` default on MPS,
   `KEV_SHAPE_BUCKET=64` on MPS, state-prefix KV LRU (`KEV_PREFIX_CACHE=4`, `KEV_PREFIX_MIN_TOKENS=384`). Any change here must keep the parity
   tests in tests/test_v3.py (merged vs unmerged, prefix vs full pass, bucket padding) passing; report numbers with the fp32 unmerged path.
 

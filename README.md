@@ -30,10 +30,32 @@ You'll need Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 ```bash
 git clone https://github.com/jaredpalmer/kev.git && cd kev
 uv sync --extra serve
+```
+
+### Python API
+
+Load a checkpoint and ask it questions in five lines. `decide` returns the `answers` object that `POST /v1/systemone` returns:
+
+```python
+from kev import Kev
+
+kev = Kev.from_pretrained("jaredpalmer/kev-4b")   # or a local checkpoint such as "runs/kev"
+answers = kev.decide(
+    "I was charged twice. Please fix this ASAP.",
+    {"billing": {"type": "noul", "instructions": "Is this ticket about billing?"}},
+)
+print(answers["billing"]["noul"])
+```
+
+The first run downloads the adapter and base model. The id also accepts a Hub revision, such as `jaredpalmer/kev-4b@qwen3` for the previous generation. A bad request or a model failure raises `kev.errors.KevError`, the same error the server returns. Settings such as `KEV_DTYPE=bf16` are read once into `kev.config.Config`; pass your own with `Kev.from_pretrained(..., config=Config(dtype="bf16"))`.
+
+### Server
+
+```bash
 KEV_DTYPE=bf16 uv run --extra serve python -m kev.serve --run jaredpalmer/kev-4b --port 8009
 ```
 
-This starts Kev-4B locally. The first run downloads the adapter and base model. `--run` also accepts a local checkpoint directory or a Hub revision, such as `jaredpalmer/kev-4b@qwen3` for the previous generation.
+This serves the same model over HTTP. `--run` takes the same ids as `from_pretrained`.
 
 In another terminal, send it a ticket:
 
@@ -72,7 +94,7 @@ Example response from Kev-4B, running in bf16 on an Apple M5:
 
 The ticket mentions a return, a late delivery, and a billing problem, and the department probabilities say so. That is the point of getting probabilities back instead of a single label.
 
-### Python
+### TypeSafe SDK
 
 The TypeSafe SDK is included in `uv sync --extra serve`:
 
@@ -105,7 +127,7 @@ print(response.scores["urgency"].score)
 
 ### Playground
 
-With the server still running, open another terminal. You'll need Node 20.9+:
+The playground uses the demo routes, so restart the server with `--demo` (add it to the command above). In another terminal, you'll need Node 20.9+:
 
 ```bash
 cd playground
@@ -136,9 +158,9 @@ Kev-9B trails Jev by 3.5 points on the new-source development set (0.822 vs 0.85
 
 All three models were updated on 2026-09-21 with a short second training pass on generated examples: policy cases with explicit day counts, and cases whose deciding evidence was removed, trained toward a uniform answer. On the test set this moved Kev-9B from 0.837 to 0.852 (95% CI +0.8 to +2.9 points), Kev-4B from 0.832 to 0.837, and Kev-0.8B from 0.668 to 0.684. The previous weights are at revision `v7-base`. Details and costs are in the model cards and [PLAN.md](PLAN.md).
 
-Probabilities are calibrated by default. Each checkpoint stores a temperature (about 2.1–2.4) fitted on its in-distribution development set, and the pointer head applies it when the model is loaded. It never changes an answer: on new sources Kev-9B's calibration error goes from 0.106 to 0.042 and its confident errors (wrong answers with probability ≥ 0.9) from 8.7% to 4.0%, about Jev's 3.7%, with accuracy identical. Set `KEV_TEMPERATURE=1.0` for the raw logits. The accuracy numbers in the table are the same either way; the Brier numbers are for the raw logits.
+Each published checkpoint stores a temperature (about 2.1–2.4) in `head.pt`, fitted on its in-distribution development set, and the pointer head applies it when the model is loaded. A checkpoint without one is served raw. `GET /v1/models` reports which case you have under `calibration`: `calibrated`, the `temperature` in use, and its `source` (`checkpoint`, `override` or `none`). The same temperature applies to every question type. It never changes an answer: on new sources Kev-9B's calibration error goes from 0.106 to 0.042 and its confident errors (wrong answers with probability ≥ 0.9) from 8.7% to 4.0%, about Jev's 3.7%, with accuracy identical. Set `KEV_TEMPERATURE=1.0` for the raw logits (`calibrated` is then `false`). The accuracy numbers in the table are the same either way; the Brier numbers are for the raw logits.
 
-One optional setting: `KEV_DATE_FACTS=1` appends the number of days between any two absolute dates found in the state ("June 26, 2026 is 8 days before July 4, 2026"). Kev can't subtract dates reliably but it can use a stated day count: on the deadline policy questions Kev-9B goes from 0.80 to 0.90 (Jev 0.93). The table above doesn't use it.
+Every `KEV_*` setting is read once into `kev/config.py`, which documents each one. One optional setting: `KEV_DATE_FACTS=1` appends the number of days between any two absolute dates found in the state ("June 26, 2026 is 8 days before July 4, 2026"). Kev can't subtract dates reliably but it can use a stated day count: on the deadline policy questions Kev-9B goes from 0.80 to 0.90 (Jev 0.93). The table above doesn't use it.
 
 ![Accuracy by source for Kev and Jev](docs/kev-family.png)
 
@@ -155,7 +177,7 @@ The first Kev family used Qwen3 bases with the same data and settings. Those wei
 | Kev-4B (Qwen3) — `jaredpalmer/kev-4b@qwen3` | Qwen3-4B-Base | 0.854 / 0.856 | 0.790 / 0.806 | 0.328 / 0.294 | [Details](docs/model-cards/kev-4b-qwen3.md) |
 | Kev-8B (Qwen3) — `jaredpalmer/kev-8b` | Qwen3-8B-Base | 0.863 / 0.870 | 0.796 / 0.780 | 0.337 / 0.327 | [Details](docs/model-cards/kev-8b-qwen3.md) |
 
-Because only the base changed, the two generations are a controlled comparison. On the development set the accuracy gain is within noise; on the test set Kev-9B is 7.3 points ahead of Kev-8B (95% CI +2.8 to +11.7) with a Brier score 0.08 lower, Kev-4B is 2.9 points ahead of its predecessor (−0.9 to +6.4), and Kev-0.8B is 4.8 points ahead of Kev-0.6B (+0.2 to +9.3). [PLAN_Qwen35.md](PLAN_Qwen35.md) has the full experiment, including the criteria we set in advance and how the results measured against them.
+Because only the base changed, the two generations are a controlled comparison. On the development set the accuracy gain is within noise; on the test set Kev-9B is 7.3 points ahead of Kev-8B (95% CI +2.8 to +11.7) with a Brier score 0.08 lower, Kev-4B is 2.9 points ahead of its predecessor (−0.9 to +6.4), and Kev-0.8B is 4.8 points ahead of Kev-0.6B (+0.2 to +9.3). [PLAN_Qwen35.md](docs/PLAN_Qwen35.md) has the full experiment, including the criteria we set in advance and how the results measured against them.
 
 The original [Kev-0.5B](https://huggingface.co/jaredpalmer/kev-0.5b) used Qwen2.5-0.5B and is kept for reference; see its [model card](docs/model-cards/kev-0.5b.md).
 
@@ -189,13 +211,47 @@ The original [Kev-0.5B](https://huggingface.co/jaredpalmer/kev-0.5b) used Qwen2.
 
 For Choice with `K > 1` options, confidence is `(p_max − 1/K) / (1 − 1/K)`. A single option has confidence 1. Score confidence measures how close the distribution is to its most likely level. It's an approximation of TypeSafe's formula, which isn't public. Neither field is a measured accuracy rate.
 
-Objects and arrays are converted to labeled text. Delimiter-like strings in user input are escaped before tokenization. Invalid requests return `422`. `usage.output_tokens` counts tokens in the serialized answers, not generated tokens.
+Objects and arrays are converted to labeled text. Delimiter-like strings in user input, and every other special or added token string the tokenizer knows, are escaped before tokenization. `usage.output_tokens` counts tokens in the serialized answers, not generated tokens.
+
+Requests are limited in `kev/limits.py`: 1 MB of body, 100,000 characters of state, 64 questions, 255 options per question and 512 per request, 2,000 characters per option, 10,000 per instruction, and 8,192 tokens of state. A request over a limit is refused, never truncated.
+
+Every failure has one shape. `path` appears when it applies, and `retryable` is true only for `unavailable`:
+
+```json
+{"error": {"code": "too_large", "message": "state is 120000 characters; the limit is 100000", "path": "state", "retryable": false}}
+```
+
+| Code | Status | When |
+|---|---|---|
+| `bad_request` | 422 | The request is malformed or breaks a rule (unknown question type, one option on a Score, unknown route) |
+| `too_large` | 413 | A limit above is exceeded |
+| `model_error` | 500 | The model failed on this request |
+| `unavailable` | 503 | The model was busy for longer than `KEV_QUEUE_TIMEOUT` seconds (default 120). Retry |
+
+The server runs one request at a time, so concurrent callers queue.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/v1/models` | Loaded model and checkpoint information |
-| `POST` | `/v1/systemone/permute` | Run one Choice question with different option orders |
-| `POST` | `/v1/systemone/separate` | Run each question in its own forward pass |
+| `POST` | `/v1/systemone` | Typed questions in, typed answers out |
+| `GET` | `/v1/models` | Loaded model, its calibration and settings, and the limits |
+| `GET` | `/healthz` | `{"status": "ok"}` |
+| `POST` | `/v1/systemone/permute` | Demo only: run one Choice question with different option orders |
+| `POST` | `/v1/systemone/separate` | Demo only: run each question in its own forward pass |
+| `POST` | `/v1/detect` | Demo only, experimental: see below |
+
+The demo routes are off unless you start the server with `--demo` (or `KEV_DEMO=1`). The playground needs them.
+
+### `POST /v1/detect` (experimental)
+
+An adapter for open-vocabulary checks in the shape of the Musubi Detect contract. It is **experimental and not calibrated**: 0.5 does not yet mean what it means for Detect categories, and it stays out of Detect until a frozen definition suite gates it. Kev was trained on public classification and QA data, not on moderation definitions at low prevalence.
+
+```jsonc
+{"content": [{"type": "text", "data": "…"}],          // exactly one text part, up to 100,000 characters
+ "definitions": {"threat": "The text states or implies harm to a person."},   // up to 32; ids match [a-z][a-z0-9_]*; up to 2,000 characters each
+ "threshold": 0.5}                                      // optional, above 0 and below 1
+```
+
+Each definition becomes one yes/no question about the text. The response is `{"model": "kev/v0.1.0/<16 hex>", "scores": {id: number}, "flagged": [id, …]}`. A score is the probability of yes, rounded down to 6 decimals. `flagged` lists the ids at or above the threshold, strongest first, ties by id. The 16 hex characters are a hash of the checkpoint and the definitions, so the same ones give the same string. Errors use the object above. See [`kev/detect.py`](kev/detect.py).
 
 The server binds to `127.0.0.1` and has no authentication. Keep it local unless you add authentication yourself.
 
@@ -329,17 +385,17 @@ These commands use development data. Test data requires `--allow-test`. The benc
 
 ## Limitations
 
-- Calibration is by a single temperature fitted in distribution. As served, Kev-9B assigns at least 0.9 probability to a wrong answer on 4.0% of new-source questions (Jev 3.7%); a fixed temperature can't reorder confidences, so the share of decisions you can automate at a 5% error budget (0.45–0.57) is still below Jev's 0.70. Test it on your own data before choosing a probability threshold.
+- Calibration is by a single temperature fitted in distribution, shared by every question type. As served, Kev-9B assigns at least 0.9 probability to a wrong answer on 4.0% of new-source questions (Jev 3.7%); a fixed temperature can't reorder confidences, so the share of decisions you can automate at a 5% error budget (0.45–0.57) is still below Jev's 0.70. Test it on your own data before choosing a probability threshold.
 - Fine-tuning can make the base model worse at individual tasks. Date arithmetic is the clearest case: the untrained Qwen3.5-9B base gets 0.82 on the `deadline` policy questions and the first Kev-9B got 0.72 ([issue #8](https://github.com/jaredpalmer/kev/issues/8)). Training on examples that state the day count, plus `KEV_DATE_FACTS=1`, recovers it (0.90). Knowledge questions (MMLU 0.74 vs Jev 0.90; MMLU-Pro 0.52 vs 0.84) are the remaining large gap, and they're set by the base model: a Kev trained on the 35B-A3B mixture-of-experts base didn't move them ([PLAN.md](PLAN.md)).
 - The current models are slow on Apple Silicon (see Serving Performance) and need `transformers >= 5.17`.
 - Changing option order can change an answer. Question isolation doesn't prevent this.
-- Training uses at most 384 state tokens and 1,024 tokens for the state plus one question. Serving allows 8,192 tokens for the state plus one question; longer context wasn't covered by training.
+- Training uses at most 384 state tokens and 1,024 tokens for the state plus one question. Serving allows 8,192 tokens for the state plus one question and refuses anything longer; context beyond the training lengths wasn't covered by training.
 - The server handles one request at a time. It caches repeated state text, but doesn't batch requests from different callers.
 
 ## Development
 
 ```bash
-uv run --extra serve python -m pytest tests/test_unit.py tests/test_research.py -q  # no weights, no server; runs in CI
+uv run --extra serve python -m pytest tests/test_unit.py tests/test_research.py tests/test_tokens.py tests/test_runtime.py tests/test_serve.py tests/test_detect.py -q  # no weights, no server; runs in CI
 KEV_BASE_URL=http://127.0.0.1:8009 uv run --extra serve python -m pytest tests/test_api.py -q   # against a running server
 cd playground && npm run lint && npx next typegen && npx tsc --noEmit -p .
 ```
