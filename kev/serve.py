@@ -3,13 +3,13 @@
 Run: uv run --extra serve python -m kev.serve --run runs/kev --port 8008
 
 Production surface: POST /v1/systemone, GET /v1/models, GET /healthz. `--demo` (or KEV_DEMO=1) adds the routes the playground
-and the experiments use: POST /v1/systemone/permute, POST /v1/systemone/separate and the experimental POST /v1/detect. Every
+and the experiments use: POST /v1/systemone/permute and POST /v1/systemone/separate. Every
 failure is {"error": {"code", "message", "path"?, "retryable"}} (kev.errors). The body limit checks Content-Length; the limits in
 kev.limits apply to what a request says after it is parsed.
 """
 import argparse, os, random, re
 
-from fastapi import Body, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -18,7 +18,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import limits
 from .api import SystemOneRequest
-from .detect import EXPERIMENTAL_NOTE, detect
 from .errors import KevError
 from .runtime import Kev, validation_error
 
@@ -104,10 +103,6 @@ def create_app(kev: Kev, demo: bool = False) -> FastAPI:
                 answers.update(res.answers); tokens += res.input_tokens; out_tokens += res.output_tokens; ms += res.latency_ms
             return {"model": req.model, "answers": answers, "usage": {"input_tokens": tokens, "output_tokens": out_tokens}, "latency_ms": round(ms, 1)}
 
-        @app.post("/v1/detect", description=EXPERIMENTAL_NOTE)
-        def detect_route(body: dict = Body(...)):
-            return detect(kev, body)
-
     return app
 
 
@@ -117,7 +112,7 @@ def main():
     ap.add_argument("--fallback", default="runs/smoke")
     ap.add_argument("--port", type=int, default=8008)
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--demo", action="store_true", help="also serve /v1/systemone/permute, /v1/systemone/separate and the experimental /v1/detect")
+    ap.add_argument("--demo", action="store_true", help="also serve /v1/systemone/permute and /v1/systemone/separate")
     a = ap.parse_args()
     from .config import Config
     config = Config.from_env()

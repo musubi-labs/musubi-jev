@@ -111,7 +111,7 @@ def test_unknown_routes_use_the_error_shape(client):
 
 
 DEMO_ROUTES = [("/v1/systemone/permute", {"request": REQ, "question": "department", "n_perm": 2}), ("/v1/systemone/separate", REQ),
-               ("/v1/detect", {"content": [{"type": "text", "data": "x"}], "definitions": {"a": "b"}}), ("/api/info", None), ("/api/predict", {"state": "s", "questions": []})]
+               ("/api/info", None), ("/api/predict", {"state": "s", "questions": []})]
 
 
 @pytest.mark.parametrize("path,body", DEMO_ROUTES)
@@ -120,17 +120,14 @@ def test_demo_and_legacy_routes_are_off_by_default(client, path, body):
     assert r.status_code in (404, 405), r.text
 
 
-def test_demo_switch_turns_on_permute_separate_and_detect(demo_client):
+def test_demo_switch_turns_on_permute_and_separate(demo_client):
     r = demo_client.post("/v1/systemone/permute", json={"request": REQ, "question": "department", "n_perm": 3})
     assert r.status_code == 200 and len(r.json()["runs"]) == 3 and set(r.json()["spread"]) == set(DEPARTMENT)
     r = demo_client.post("/v1/systemone/separate", json=REQ)
     assert r.status_code == 200 and set(r.json()["answers"]) == set(REQ["questions"]) and r.json()["usage"]["input_tokens"] > 0
     assert_error(demo_client.post("/v1/systemone/permute", json={"request": REQ, "question": "escalate"}), "bad_request", 422, "question")
     assert_error(demo_client.post("/v1/systemone/permute", json={"request": REQ, "question": "department", "n_perm": 999}), "bad_request", 422, "n_perm")
-    r = demo_client.post("/v1/detect", json={"content": [{"type": "text", "data": STATE}], "definitions": {"late": "The order arrived late.", "billing": "A charge is disputed."}})
-    assert r.status_code == 200 and set(r.json()) == {"model", "scores", "flagged"} and re.fullmatch(r"kev/v\d+\.\d+\.\d+/[0-9a-f]{16}", r.json()["model"])
-    assert_error(demo_client.post("/v1/detect", json={"content": [], "definitions": {"a": "b"}}), "bad_request", 422, "content")
-    assert demo_client.get("/v1/models").status_code == 200 and "/v1/detect" in demo_client.get("/openapi.json").json()["paths"]
+    assert demo_client.get("/v1/models").status_code == 200
 
 
 def test_separate_matches_packed_within_noise(demo_client):

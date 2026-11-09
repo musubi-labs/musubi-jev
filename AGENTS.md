@@ -62,7 +62,7 @@ See README.md (deep dive) and docs/model-cards/ (one card per checkpoint: recipe
   - Production surface (no auth): `POST /v1/systemone` (TypeSafe-compatible, also returns `latency_ms`), `GET /v1/models`, `GET /healthz`. There are no `/api/*` routes.
   - Every failure is `{"error": {"code", "message", "path"?, "retryable"}}`: `bad_request` 422, `too_large` 413, `model_error` 500, `unavailable` 503.
   - `--demo` (or `KEV_DEMO=1`) adds the demo routes: `POST /v1/systemone/permute` (one Choice under n option orders), `POST /v1/systemone/separate`
-    (each question alone; packed-vs-separate comparison) and the experimental, uncalibrated `POST /v1/detect` (`kev/detect.py`, Detect wire for open-vocabulary definitions).
+    (each question alone; packed-vs-separate comparison).
   - SDK: `TypeSafeClient(api_key="local", base_url="http://127.0.0.1:8008", model="kev-latest")`
 - Web demo: start the server with `--demo` (the playground calls permute and separate), then `cd playground && npm run dev -- -p 3001` (:3000 is used by another project). Next 16 app router; `/kev/*` is
   rewritten to the FastAPI server (`KEV_API`, default http://127.0.0.1:8009). Presets live in `playground/src/lib/kev.ts`.
@@ -71,7 +71,7 @@ See README.md (deep dive) and docs/model-cards/ (one card per checkpoint: recipe
   - React Compiler lint forbids sync setState in effects; schedule via setTimeout or move into handlers.
   - Next 16 dev only trusts `localhost`; other hostnames need `allowedDevOrigins` or the page SSRs but never hydrates
     (no console errors). `127.0.0.1` is allowed in `next.config.ts`. Verify hydration with `agent-browser` (CDP), not curl.
-- Unit tests (no weights, CI): `uv run --extra serve python -m pytest tests/test_unit.py tests/test_research.py tests/test_tokens.py tests/test_runtime.py tests/test_serve.py tests/test_detect.py -q`.
+- Unit tests (no weights, CI): `uv run --extra serve python -m pytest tests/test_unit.py tests/test_research.py tests/test_tokens.py tests/test_runtime.py tests/test_serve.py -q`.
   `tests/conftest.py` builds a tiny random checkpoint (local tokenizer, 2-layer Qwen2, rank-4 LoRA) so the loader, `Kev` and the server run without downloads.
 - API tests (server must be up): `KEV_BASE_URL=http://127.0.0.1:8009 uv run --extra serve python -m pytest tests/test_api.py -q`
 
@@ -84,8 +84,7 @@ See README.md (deep dive) and docs/model-cards/ (one card per checkpoint: recipe
 - `kev/plot.py`      loss curve(s) from train logs + accuracy-vs-baselines bars from eval.json
 - `kev/api.py`       TypeSafe request/response models; Noul/Choice/Score -> pointer options; confidence formulas
 - `kev/runtime.py`   `Kev`: load a checkpoint, `decide`/`answer`, limits, lock, prefix cache
-- `kev/serve.py`     FastAPI over one `Kev`: /v1/systemone, /v1/models, /healthz; `--demo` adds permute, separate, /v1/detect
-- `kev/detect.py`    experimental Detect-shaped adapter (definitions -> Noul questions); not calibrated
+- `kev/serve.py`     FastAPI over one `Kev`: /v1/systemone, /v1/models, /healthz; `--demo` adds permute and separate
 - `kev/config.py`, `kev/checkpoint.py`, `kev/errors.py`, `kev/limits.py`, `kev/hub.py`   settings, head.pt metadata, the error object, request limits, Hub ids
 - `tests/test_api.py` conformance against the docs' example requests + official SDK
 

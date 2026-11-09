@@ -10,7 +10,7 @@ returns the raw probabilities and the usage figures. Calls are serialised by one
 the prefix cache are shared; a caller that waits longer than Config.queue_timeout gets the error `unavailable`.
 Every failure is a kev.errors.KevError.
 """
-import hashlib, json, logging, os, threading, time
+import logging, os, threading, time
 from dataclasses import dataclass, replace
 
 import torch
@@ -24,7 +24,6 @@ from .evaluate import load, resolve_run
 from .model import ControlToken, TooLong
 
 log = logging.getLogger("kev")
-TEMPLATE_VERSION = "kev-text-1"   # the rendering of requests into model text (api.render, api.to_record, model.encode); part of identity()
 _UNION_TAGS = {"noul", "choice", "score"}
 
 
@@ -91,7 +90,6 @@ class Kev:
         self.path, self.label = path, label or path
         self.lock = threading.Lock()
         self.prefix_cache, self.prefix_hits, self.prefix_misses = {}, 0, 0
-        self._identity = None
 
     @classmethod
     def from_pretrained(cls, run: str, device: str = "auto", config: Config | None = None, label: str | None = None) -> "Kev":
@@ -115,22 +113,6 @@ class Kev:
         return {"run": self.label, "base": m.base, "temperature": m.applied_temperature, "calibration": m.calibration(),
                 "config": self.config.describe(), "limits": {k.lower(): v for k, v in vars(limits).items() if k.isupper()}}
 
-    def identity(self) -> str:
-        """sha256 of everything that decides a number: the adapter and head bytes, the base and its revision, the temperature
-        in use, the load settings that change numerics, and the text template. Same checkpoint and settings, same string."""
-        if self._identity is None:
-            h = hashlib.sha256()
-            for name in ("adapter_model.safetensors", "head.pt"):
-                f = f"{self.path}/{name}" if self.path else ""
-                if f and os.path.isfile(f):
-                    with open(f, "rb") as fh:
-                        for chunk in iter(lambda: fh.read(1 << 20), b""): h.update(chunk)
-                h.update(name.encode())
-            m, c = self.meta, self.config
-            h.update(json.dumps({"base": m.base, "base_revision": m.base_revision, "temperature": m.applied_temperature, "dtype": c.dtype,
-                                 "merge": c.merge, "lora_scale": c.lora_scale, "date_facts": c.date_facts, "template": TEMPLATE_VERSION}, sort_keys=True).encode())
-            self._identity = h.hexdigest()
-        return self._identity
 
     def decide(self, state, questions) -> dict:
         """Typed questions about one state -> the `answers` object of /v1/systemone. `questions` maps an id to a Noul, Choice

@@ -237,21 +237,8 @@ The server runs one request at a time, so concurrent callers queue.
 | `GET` | `/healthz` | `{"status": "ok"}` |
 | `POST` | `/v1/systemone/permute` | Demo only: run one Choice question with different option orders |
 | `POST` | `/v1/systemone/separate` | Demo only: run each question in its own forward pass |
-| `POST` | `/v1/detect` | Demo only, experimental: see below |
 
 The demo routes are off unless you start the server with `--demo` (or `KEV_DEMO=1`). The playground needs them.
-
-### `POST /v1/detect` (experimental)
-
-An adapter for open-vocabulary checks in the shape of the Musubi Detect contract. It is **experimental and not calibrated**: 0.5 does not yet mean what it means for Detect categories, and it stays out of Detect until a frozen definition suite gates it. Kev was trained on public classification and QA data, not on moderation definitions at low prevalence.
-
-```jsonc
-{"content": [{"type": "text", "data": "…"}],          // exactly one text part, up to 100,000 characters, and no more than 8,192 tokens
- "definitions": {"threat": "The text states or implies harm to a person."},   // up to 32; ids match [a-z][a-z0-9_]*; up to 2,000 characters each
- "threshold": 0.5}                                      // optional, above 0 and below 1
-```
-
-Each definition becomes one yes/no question about the text. The response is `{"model": "kev/v0.1.0/<16 hex>", "scores": {id: number}, "flagged": [id, …]}`. A score is the probability of yes, rounded down to 6 decimals. `flagged` lists the ids at or above the threshold, strongest first, ties by id. The 16 hex characters are a hash of the checkpoint and the definitions, so the same ones give the same string. Errors use the object above. See [`kev/detect.py`](kev/detect.py).
 
 The server binds to `127.0.0.1` and has no authentication. Keep it local unless you add authentication yourself.
 
@@ -395,7 +382,7 @@ These commands use development data. Test data requires `--allow-test`. The benc
 ## Development
 
 ```bash
-uv run --extra serve python -m pytest tests/test_unit.py tests/test_research.py tests/test_tokens.py tests/test_runtime.py tests/test_serve.py tests/test_detect.py -q  # no weights, no server; runs in CI
+uv run --extra serve python -m pytest tests/test_unit.py tests/test_research.py tests/test_tokens.py tests/test_runtime.py tests/test_serve.py -q  # no weights, no server; runs in CI
 KEV_BASE_URL=http://127.0.0.1:8009 uv run --extra serve python -m pytest tests/test_api.py -q   # against a running server
 cd playground && npm run lint && npx next typegen && npx tsc --noEmit -p .
 ```
