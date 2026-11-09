@@ -1,177 +1,114 @@
-"""FastAPI sidecar for the playground: loads one checkpoint, exposes prefill-only decisions.
+"""FastAPI server over one loaded checkpoint: prefill-only decisions, TypeSafe-compatible.
 
 Run: uv run --extra serve python -m kev.serve --run runs/kev --port 8008
+
+Production surface: POST /v1/systemone, GET /v1/models, GET /healthz. `--demo` (or KEV_DEMO=1) adds the routes the playground
+and the experiments use: POST /v1/systemone/permute, POST /v1/systemone/separate and the experimental POST /v1/detect. Every
+failure is {"error": {"code", "message", "path"?, "retryable"}} (kev.errors). The body limit checks Content-Length; the limits in
+kev.limits apply to what a request says after it is parsed.
 """
-import argparse, json, os, random, re, threading, time
-import torch
-from fastapi import FastAPI, HTTPException
+import argparse, os, random, re
+
+from fastapi import Body, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from .api import SystemOneRequest, to_record, to_answers, output_tokens, with_date_facts
-from .data import DISTRACTORS, NONE
-from .evaluate import load
-from .model import encode
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-# inference limits (training used 384/640); per-branch cap mirrors Jev's ~32k, bounded by the base model window
-INFER_MAX_STATE, INFER_MAX_BRANCH = 8192, 8192
-
-app = FastAPI(title="kev")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-STATE = {"run": None, "tok": None, "model": None, "dev": None, "lock": threading.Lock(), "prefix_cache": {}, "prefix_hits": 0, "prefix_misses": 0}
-PREFIX_CACHE_SIZE = int(os.environ.get("KEV_PREFIX_CACHE", "4"))          # states kept (KV + hidden); 0 disables
-PREFIX_MIN_TOKENS = int(os.environ.get("KEV_PREFIX_MIN_TOKENS", "384"))
-DATE_FACTS = os.environ.get("KEV_DATE_FACTS", "0") == "1"                  # opt-in: append day counts between absolute dates in the state (api.with_date_facts)   # below this the branch-only pass is not faster on MPS (per-op overhead dominates)
-
-
-class Question(BaseModel):
-    instr: str
-    options: list[str]
-
-
-class Record(BaseModel):
-    state: str
-    questions: list[Question]
-
-
-class PermuteReq(BaseModel):
-    state: str
-    question: Question
-    n_perm: int = 6
-    seed: int = 0
-
-
-def _rec(r: Record):
-    return {"state": r.state, "questions": [{"instr": q.instr, "options": q.options, "label": 0} for q in r.questions]}
-
-
-def _sync(dev):
-    if dev == "mps": torch.mps.synchronize()
-    elif dev == "cuda": torch.cuda.synchronize()
-
-
-def _probs(rec):
-    """One forward pass; the state prefix (tokens up to the first question) is cached across requests, so a repeated state
-    only pays for its question branches. Exactness: the state's activations do not depend on the branches."""
-    tok, model, dev = STATE["tok"], STATE["model"], STATE["dev"]
-    try: enc = model.encode(tok, rec, max_state=INFER_MAX_STATE, max_branch=INFER_MAX_BRANCH)
-    except ValueError as e: raise HTTPException(422, str(e))
-    Ls = enc["seg"].count(0); key = (tuple(enc["ids"][:Ls]), bool(enc.get("option_isolation")))
-    cache = STATE["prefix_cache"]
-    with STATE["lock"]:
-        _sync(dev); t = time.time()
-        eligible = PREFIX_CACHE_SIZE and Ls >= PREFIX_MIN_TOKENS
-        if eligible and key in cache:
-            prefix = cache.pop(key)                       # pop + reinsert = LRU order
-            ps = model.probs_with_prefix(enc, prefix); cache[key] = prefix
-            STATE["prefix_hits"] += 1; hit = True
-        elif eligible:
-            ps, prefix = model.probs_and_prefix(enc)      # one pass, and the state prefix is kept for next time
-            cache[key] = prefix
-            while len(cache) > PREFIX_CACHE_SIZE: cache.pop(next(iter(cache)))
-            STATE["prefix_misses"] += 1; hit = False
-        else:
-            ps = model.probs(enc); hit = False
-        _sync(dev); dt = time.time() - t
-    return [p.tolist() for p in ps], {"tokens": len(enc["ids"]), "state_tokens": Ls, "latency_ms": round(dt * 1000, 1), "prefix_cache_hit": hit}
-
-
-@app.post("/v1/systemone")
-def systemone(req: SystemOneRequest):
-    """TypeSafe-compatible endpoint: typed questions in, typed answers out, one prefill pass."""
-    if DATE_FACTS: req = req.model_copy(update={"state": with_date_facts(req.state)})
-    rec, meta = to_record(req)
-    ps, m = _probs(rec)
-    answers = to_answers(ps, meta)
-    return {"model": req.model, "answers": answers, "usage": {"input_tokens": m["tokens"], "output_tokens": output_tokens(STATE["tok"], answers)}, "latency_ms": m["latency_ms"]}
+from . import limits
+from .api import SystemOneRequest
+from .detect import EXPERIMENTAL_NOTE, detect
+from .errors import KevError
+from .runtime import Kev, validation_error
 
 
 class PermuteSystemOne(BaseModel):
     request: SystemOneRequest
     question: str
-    n_perm: int = 6
+    n_perm: int = Field(default=6, ge=1, le=24)
     seed: int = 0
 
 
-@app.post("/v1/systemone/permute")
-def systemone_permute(r: PermuteSystemOne):
-    """Re-run one Choice question under n_perm option orders. Returns per-order probabilities keyed by option name."""
-    q = r.request.questions.get(r.question)
-    if q is None or q.type != "choice": raise HTTPException(422, "question must be an existing choice question")
-    rng = random.Random(r.seed); keys = list(q.criteria); runs = []
-    for i in range(r.n_perm):
-        order = list(keys)
-        if i > 0: rng.shuffle(order)
-        req = r.request.model_copy(update={"questions": {r.question: q.model_copy(update={"criteria": {k: q.criteria[k] for k in order}})}})
-        if DATE_FACTS: req = req.model_copy(update={"state": with_date_facts(req.state)})
-        rec, meta = to_record(req); ps, m = _probs(rec)
-        a = to_answers(ps, meta)[r.question]
-        runs.append({"order": order, "probabilities": a["probabilities"], "choice": a["choice"], "latency_ms": m["latency_ms"]})
-    spread = {k: max(x["probabilities"][k] for x in runs) - min(x["probabilities"][k] for x in runs) for k in keys}
-    return {"runs": runs, "argmax_stable": len({x["choice"] for x in runs}) == 1, "spread": spread}
+def _error(err: KevError) -> JSONResponse:
+    return JSONResponse(err.body(), status_code=err.status)
 
 
-@app.post("/v1/systemone/separate")
-def systemone_separate(req: SystemOneRequest):
-    """Answer each question in its own request against the same state (N passes). For packed-vs-separate comparison."""
-    answers, tokens, ms = {}, 0, 0.0
-    for qid, q in req.questions.items():
-        rec, meta = to_record(req.model_copy(update={"questions": {qid: q}, **({"state": with_date_facts(req.state)} if DATE_FACTS else {})})); ps, m = _probs(rec)
-        answers.update(to_answers(ps, meta)); tokens += m["tokens"]; ms += m["latency_ms"]
-    return {"model": req.model, "answers": answers, "usage": {"input_tokens": tokens, "output_tokens": output_tokens(STATE["tok"], answers)}, "latency_ms": round(ms, 1)}
+def create_app(kev: Kev, demo: bool = False) -> FastAPI:
+    app = FastAPI(title="kev")
 
+    @app.exception_handler(KevError)
+    async def _kev_error(request: Request, exc: KevError):
+        return _error(exc)
 
-@app.get("/v1/models")
-def models():
-    return {"models": [{"id": "kev-latest", "aliases": ["jev-latest"], "run": STATE["run"], "base": STATE["base"], "temperature": STATE["model"].head.temperature if STATE.get("model") else None}]}
+    @app.exception_handler(RequestValidationError)
+    async def _invalid(request: Request, exc: RequestValidationError):
+        return _error(validation_error(exc.errors()))
 
+    @app.exception_handler(StarletteHTTPException)
+    async def _http(request: Request, exc: StarletteHTTPException):
+        code = "bad_request" if exc.status_code < 500 else "model_error"
+        return JSONResponse({"error": {"code": code, "message": str(exc.detail), "retryable": False}}, status_code=exc.status_code)
 
-@app.get("/api/info")
-def info():
-    ev = f"{STATE['run']}/eval.json"
-    return {"run": STATE["run"], "device": STATE["dev"], "base": STATE["base"], "lora": STATE["lora"],
-            "none_option": NONE, "distractors": DISTRACTORS, "has_eval": os.path.exists(ev),
-            "prefix_cache": {"size": PREFIX_CACHE_SIZE, "min_state_tokens": PREFIX_MIN_TOKENS, "hits": STATE["prefix_hits"], "misses": STATE["prefix_misses"], "cached_states": len(STATE["prefix_cache"])}}
+    @app.exception_handler(Exception)
+    async def _unexpected(request: Request, exc: Exception):
+        return _error(KevError("model_error", "internal error"))
 
+    @app.middleware("http")
+    async def _body_limit(request: Request, call_next):
+        n = request.headers.get("content-length", "")
+        if n.isdigit() and int(n) > limits.MAX_BODY_BYTES:
+            return _error(KevError("too_large", f"request body is {n} bytes; the limit is {limits.MAX_BODY_BYTES}", "body"))
+        return await call_next(request)
 
-@app.get("/api/eval")
-def eval_json():
-    p = f"{STATE['run']}/eval.json"
-    if not os.path.exists(p): raise HTTPException(404, "no eval.json for this run")
-    return json.load(open(p))
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+    @app.post("/v1/systemone")
+    def systemone(req: SystemOneRequest):
+        """TypeSafe-compatible endpoint: typed questions in, typed answers out, one prefill pass."""
+        r = kev.answer(req)
+        return {"model": req.model, "answers": r.answers, "usage": r.usage, "latency_ms": r.latency_ms}
 
-@app.post("/api/predict")
-def predict(r: Record):
-    """All questions in one block-causal pass (shared state prefix)."""
-    ps, meta = _probs(_rec(r))
-    return {"probs": ps, **meta}
+    @app.get("/v1/models")
+    def models():
+        i = kev.info()
+        return {"models": [{"id": "kev-latest", "aliases": ["jev-latest"], "run": i["run"], "base": i["base"], "temperature": i["temperature"],
+                            "calibration": i["calibration"], "config": i["config"], "limits": i["limits"]}]}
 
+    @app.get("/healthz")
+    def healthz():
+        return {"status": "ok"}
 
-@app.post("/api/predict_separate")
-def predict_separate(r: Record):
-    """Each question alone against the same state (N passes). For packed-vs-separate comparison."""
-    rec = _rec(r); out, tokens, ms = [], 0, 0.0
-    for q in rec["questions"]:
-        ps, meta = _probs({"state": rec["state"], "questions": [q]})
-        out.append(ps[0]); tokens += meta["tokens"]; ms += meta["latency_ms"]
-    return {"probs": out, "tokens": tokens, "latency_ms": round(ms, 1)}
+    if demo:
+        @app.post("/v1/systemone/permute")
+        def systemone_permute(r: PermuteSystemOne):
+            """Re-run one Choice question under n_perm option orders. Returns per-order probabilities keyed by option name."""
+            q = r.request.questions.get(r.question)
+            if q is None or q.type != "choice": raise KevError("bad_request", "question must be an existing choice question", "question")
+            rng = random.Random(r.seed); keys = list(q.criteria); runs = []
+            for i in range(r.n_perm):
+                order = list(keys)
+                if i > 0: rng.shuffle(order)
+                req = r.request.model_copy(update={"questions": {r.question: q.model_copy(update={"criteria": {k: q.criteria[k] for k in order}})}})
+                res = kev.answer(req); a = res.answers[r.question]
+                runs.append({"order": order, "probabilities": a["probabilities"], "choice": a["choice"], "latency_ms": res.latency_ms})
+            spread = {k: max(x["probabilities"][k] for x in runs) - min(x["probabilities"][k] for x in runs) for k in keys}
+            return {"runs": runs, "argmax_stable": len({x["choice"] for x in runs}) == 1, "spread": spread}
 
+        @app.post("/v1/systemone/separate")
+        def systemone_separate(req: SystemOneRequest):
+            """Answer each question in its own request against the same state (N passes). For packed-vs-separate comparison."""
+            answers, tokens, out_tokens, ms = {}, 0, 0, 0.0
+            for qid, q in req.questions.items():
+                res = kev.answer(req.model_copy(update={"questions": {qid: q}}))
+                answers.update(res.answers); tokens += res.input_tokens; out_tokens += res.output_tokens; ms += res.latency_ms
+            return {"model": req.model, "answers": answers, "usage": {"input_tokens": tokens, "output_tokens": out_tokens}, "latency_ms": round(ms, 1)}
 
-@app.post("/api/permute")
-def permute(r: PermuteReq):
-    """Shuffle the option order n_perm times; return each ordering's probs mapped back to original indices."""
-    rng = random.Random(r.seed); K = len(r.question.options); runs = []
-    for i in range(r.n_perm):
-        perm = list(range(K))
-        if i > 0: rng.shuffle(perm)
-        q = {"instr": r.question.instr, "options": [r.question.options[j] for j in perm], "label": 0}
-        ps, meta = _probs({"state": r.state, "questions": [q]})
-        orig = [0.0] * K
-        for pos, j in enumerate(perm): orig[j] = ps[0][pos]
-        runs.append({"perm": perm, "probs": orig, "argmax": perm[max(range(K), key=lambda i: ps[0][i])], "latency_ms": meta["latency_ms"]})
-    argmaxes = {x["argmax"] for x in runs}
-    spread = [max(x["probs"][j] for x in runs) - min(x["probs"][j] for x in runs) for j in range(K)]
-    return {"runs": runs, "argmax_stable": len(argmaxes) == 1, "n_distinct_argmax": len(argmaxes), "spread": spread}
+        @app.post("/v1/detect", description=EXPERIMENTAL_NOTE)
+        def detect_route(body: dict = Body(...)):
+            return detect(kev, body)
+
+    return app
 
 
 def main():
@@ -179,21 +116,19 @@ def main():
     ap.add_argument("--run", default="runs/kev")
     ap.add_argument("--fallback", default="runs/smoke")
     ap.add_argument("--port", type=int, default=8008)
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--demo", action="store_true", help="also serve /v1/systemone/permute, /v1/systemone/separate and the experimental /v1/detect")
     a = ap.parse_args()
-    from .evaluate import resolve_run
+    from .config import Config
+    config = Config.from_env()
     is_hub_id = re.fullmatch(r"[\w.-]+/[\w.-]+", a.run) and not os.path.isdir(a.run)
     run = a.run if is_hub_id or os.path.exists(f"{a.run}/head.pt") else a.fallback
     if run != a.run: print(f"{a.run} not found, falling back to {run}")
-    label = run                       # what /v1/models reports: the Hub id or run path as given, not the resolved cache path
-    run = resolve_run(run)
-    dev = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-    meta = torch.load(f"{run}/head.pt", map_location="cpu")
-    if dev == "mps" and not os.environ.get("KEV_ATTN"): os.environ["KEV_ATTN"] = "sdpa"   # serving default on Apple GPUs (parity measured)
-    tok, model = load(run, dev)
-    STATE.update(run=label, tok=tok, model=model, dev=dev, base=meta["base"], lora=meta["lora"])
-    print(f"serving {label} ({run}) on {dev} :{a.port}")
+    kev = Kev.from_pretrained(run, config=config)    # /v1/models reports the Hub id or run path as given, not the resolved cache path
+    demo = a.demo or config.demo
+    print(f"serving {run} ({kev.path}) on {kev.device} {a.host}:{a.port}{' with demo routes' if demo else ''}")
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=a.port)
+    uvicorn.run(create_app(kev, demo=demo), host=a.host, port=a.port)
 
 
 if __name__ == "__main__":

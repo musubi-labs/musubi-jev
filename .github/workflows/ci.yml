@@ -14,8 +14,9 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --extra serve
-      # Unit tests only: no model weights, no server. The tokenizer (~10 MB) is downloaded from the Hub.
-      - run: uv run python -m pytest tests/test_unit.py tests/test_research.py -q
+      # No model weights and no live server. test_unit.py and test_tokens.py download the Qwen2.5 tokenizer (~10 MB) from the Hub;
+      # test_runtime.py, test_serve.py and test_detect.py build a tiny random checkpoint locally (tests/conftest.py).
+      - run: uv run python -m pytest tests/test_unit.py tests/test_research.py tests/test_tokens.py tests/test_runtime.py tests/test_serve.py tests/test_detect.py -q
 
   playground:
     runs-on: ubuntu-latest

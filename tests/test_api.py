@@ -1,5 +1,6 @@
 """Conformance: the docs' example requests must round-trip through /v1/systemone with the documented shapes.
-Run with the server up:  uv run --extra serve python -m pytest tests -q
+Run with the server up:  uv run --extra serve python -m pytest tests/test_api.py -q
+The server and the Python API are also tested without weights in tests/test_serve.py and tests/test_runtime.py.
 """
 import math, os
 import httpx, pytest
@@ -60,7 +61,8 @@ def test_noul_score_and_object_state():
 
 
 def test_validation_422():
-    assert post({"state": "x", "model": "m", "questions": {"q": {"type": "score", "instructions": "i", "criteria": ["only one"]}}})[0] == 422
+    code, body = post({"state": "x", "model": "m", "questions": {"q": {"type": "score", "instructions": "i", "criteria": ["only one"]}}})
+    assert code == 422 and body["error"]["code"] == "bad_request" and body["error"]["path"] == "questions.q.criteria" and body["error"]["retryable"] is False
     assert post({"state": "x", "model": "m", "questions": {"q": {"type": "bogus", "instructions": "i"}}})[0] == 422
     assert post({"state": "x", "model": "m", "questions": {}})[0] == 422
     assert post({"state": "x", "model": "m", "questions": {"q": {"type": "choice", "instructions": "i", "criteria": {f"o{i}": None for i in range(256)}}}})[0] == 422

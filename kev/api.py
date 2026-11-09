@@ -5,8 +5,8 @@ Choice -> options 'name' or 'name: desc';      answer = argmax, probabilities by
 Score  -> options = ordered level descriptions; answer = expected level, legend, probabilities by index
 """
 import re
-from typing import Any, Literal, Union
-from pydantic import BaseModel, Field, model_validator
+from typing import Annotated, Any, Literal, Union
+from pydantic import BaseModel, Field
 
 JSONContent = Union[str, dict, list, int, float, bool, None]
 MAX_OPTIONS = 255
@@ -21,12 +21,7 @@ class Noul(BaseModel):
 class Choice(BaseModel):
     type: Literal["choice"]
     instructions: JSONContent
-    criteria: dict[str, JSONContent]
-
-    @model_validator(mode="after")
-    def _check(self):
-        if not 1 <= len(self.criteria) <= MAX_OPTIONS: raise ValueError(f"criteria must have 1..{MAX_OPTIONS} options")
-        return self
+    criteria: dict[str, JSONContent] = Field(min_length=1, max_length=MAX_OPTIONS)
 
 
 class Score(BaseModel):
@@ -35,7 +30,7 @@ class Score(BaseModel):
     criteria: list[JSONContent] = Field(min_length=2, max_length=MAX_OPTIONS)
 
 
-Question = Union[Noul, Choice, Score]
+Question = Annotated[Union[Noul, Choice, Score], Field(discriminator="type")]
 
 
 class SystemOneRequest(BaseModel):
@@ -82,7 +77,7 @@ def date_facts(text: str) -> str:
 
 def with_date_facts(state):
     """State with a `date_facts` field (object states) or an appended paragraph (string states) when two or more absolute
-    dates appear. Opt-in preprocessing (KEV_DATE_FACTS=1 in kev.serve, --date_facts in kev.benchmark)."""
+    dates appear. Opt-in preprocessing (KEV_DATE_FACTS=1 / Config.date_facts in kev.runtime, --date_facts in kev.benchmark)."""
     facts = date_facts(render(state))
     if not facts: return state
     if isinstance(state, dict): return {**state, "date_facts": facts}
