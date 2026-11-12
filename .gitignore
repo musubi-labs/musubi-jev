@@ -21,55 +21,11 @@ runs/logs/*
 .DS_Store
 
 # research results: keep reports and comparisons, not raw prediction dumps
-!runs/research-kev-v01/
-runs/research-kev-v01/*
-!runs/research-kev-v01/report.json
-!runs/research-jev-v1/
-runs/research-jev-v1/*
-!runs/research-jev-v1/report.json
-!runs/research-jev-v1/usage.json
 !runs/kev-vs-jev-v1.json
-!runs/transfer-kev-v01/
-runs/transfer-kev-v01/*
-!runs/transfer-kev-v01/report.json
-!runs/transfer-jev-v1/
-runs/transfer-jev-v1/*
-!runs/transfer-jev-v1/report.json
-!runs/transfer-jev-v1/usage.json
 !runs/kev-vs-jev-transfer-v1.json
 
 # vendored agent skills (modal skills install); reinstall with `uv run modal skills install`
 .agents/skills/modal/
-# Modal studies: keep results/ledger/provenance, not checkpoints or prediction dumps
-!runs/backbone-v1/
-!runs/ablation-v2/
-runs/ablation-v2/*
-!runs/ablation-v2/results.jsonl
-!runs/ablation-v2/*/
-runs/ablation-v2/*/*
-!runs/ablation-v2/*/result.json
-!runs/ablation-v2/*/provenance.json
-!runs/ablation-v2/*/train.log
-runs/backbone-v1/*
-!runs/backbone-v1/results.jsonl
-!runs/backbone-v1/*/
-runs/backbone-v1/*/*
-!runs/backbone-v1/*/result.json
-!runs/backbone-v1/*/provenance.json
-!runs/backbone-v1/*/train.log
-!runs/research-kev2-dev/
-runs/research-kev2-dev/*
-!runs/research-kev2-dev/report.json
-# v3 studies: results, ledger, provenance, comparisons, train logs only
-!runs/v3-*/
-runs/v3-*/*
-!runs/v3-*/results.jsonl
-!runs/v3-*/*/
-runs/v3-*/*/*
-!runs/v3-*/*/result.json
-!runs/v3-*/*/comparison.json
-!runs/v3-*/*/provenance.json
-!runs/v3-*/*/train.log
 # every study under runs/: keep ledgers, results, provenance, comparisons, training logs, Jev reports; never weights or prediction dumps
 !runs/*/
 runs/*/*
