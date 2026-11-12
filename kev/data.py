@@ -36,7 +36,6 @@ def _dataset(repo, split, rng):
     revision = getattr(rng, "revision", None) or PARQUET_BRANCH.get(name)
     return load_dataset(name, config or None, split=split, revision=revision)
 
-NONE = "None of the above"
 # "None of the above" options must appear both as the correct answer and as a wrong alternative, with varied
 # wording, or the model learns "this wording => pick it" (it did, in the first training run).
 NONE_OPTIONS = [("other", "None of the above"), ("other", "A reason that fits none of the above"), ("none", "None of these"),

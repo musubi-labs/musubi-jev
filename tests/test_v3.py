@@ -225,7 +225,7 @@ def test_ordinal_threshold_families_are_balanced_minimal_pairs():
 
 
 def test_remote_predictor_maps_system_one_answers_and_retries(monkeypatch):
-    import io, json
+    import json
     from kev.benchmark import RemotePredictor
     rec = {"state": "s", "questions": {"q": {"type": "choice", "instructions": "i", "criteria": {"a": "A", "b": "B"}, "label": "a", "src": "t"},
                                        "y": {"type": "noul", "instructions": "i", "label": True, "src": "t"}}}
