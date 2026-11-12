@@ -180,7 +180,6 @@ def execute_trial(config, suite, output, expected_sources, device, existing=None
             raise ValueError(f"resume refused: suite or evaluator code differs from the interrupted trial: {sorted(changed & EVALUATOR_FILES)}")
         provenance.update(eval_device=device, resumed_evaluation=True, resumed_source_hashes=expected_sources,
                           resumed_with_changed_non_evaluator_files=sorted(changed), resumed_git_commit=git_commit())
-        expected_sources = expected_sources   # the post-trial drift check below compares against the current tree
         for part in ("calibration", "development", "transfer"):
             if (output / part).exists(): shutil.rmtree(output / part)   # partial evaluation output only
         write_json(output / "provenance.json", provenance)
@@ -313,7 +312,7 @@ def main():
         aggregate(a.out); return
     if a.resume:
         if not a.suite: ap.error("--suite is required with --resume")
-        suite = Path(a.suite).resolve(); expected = None
+        suite = Path(a.suite).resolve()
         for directory in sorted(Path(a.out).iterdir()):
             if (directory / "checkpoint" / "head.pt").exists() and not (directory / "result.json").exists():
                 print(f"Resuming evaluation for {directory.name}", flush=True)

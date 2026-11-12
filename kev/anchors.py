@@ -44,7 +44,6 @@ def build(base, suite, out, split="train", device=None, revision=None, max_optio
             enc = tok([p for _, _, p, _ in chunk], return_tensors="pt", padding=True, truncation=True, max_length=3072).to(device)
             logits = model(**enc).logits[:, -1].float()
             for (rid, qid, _, keys), row in zip(chunk, logits):
-                if len(keys) > len(letter_ids): skipped += 1; continue
                 p = torch.softmax(row[letter_ids[: len(keys)]], -1).tolist()
                 targets.setdefault(rid, {})[qid] = dict(zip(keys, p))
             if (i // batch) % 50 == 0: print(f"anchors {i}/{len(jobs)}", flush=True)

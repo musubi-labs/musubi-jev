@@ -1,4 +1,4 @@
-import argparse, contextlib, json, math, os, random, resource, sys, time
+import argparse, contextlib, json, math, random, resource, sys, time
 from pathlib import Path
 from collections import Counter
 import torch
@@ -275,7 +275,6 @@ def main():
                 if step % 10 == 0:
                     print(f"ep{ep} step {step}/{steps} loss {run['ce']/run['n']:.3f} kl {run['kl']/max(run['kl_n'],1):.3f} anchor {run['anchor']/max(run['anchor_n'],1):.3f} {(time.time()-t0)/seen:.3f}s/rec", flush=True)
                     run = Counter()
-    os.makedirs(a.out, exist_ok=True)
     model.lm.save_pretrained(a.out)
     torch.save({"head": model.head.state_dict(), "base": a.base, "base_revision": revision, "lora": a.lora, "head_dim": a.head_dim,
                 "option_isolation": bool(a.option_isolation), "special_embeddings": bool(a.special_embeddings), "weights_dtype": a.weights_dtype,
